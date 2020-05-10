@@ -36,6 +36,15 @@ public class regexredux {
     @Option(name="-c", aliases="--check", usage="Validate result")
     private boolean check = false;
 
+    @Option(name="-l", aliases="--precompile", usage="Precompile the pattern")
+    private boolean precompile = false;
+
+    @Option(name="-S", aliases="--hyperscanOnly", usage="Only run hyperscan")
+    private boolean hyperscanOnly = false;
+
+    @Option(name="-u", aliases="--simulateSQL", usage="Compare bench for simulating SQL")
+    private boolean simulateSQL = false;
+
     private boolean parseArgs(final String[] args) {
         final CmdLineParser parser = new CmdLineParser(this);
         if (args.length < 1) {
@@ -112,6 +121,95 @@ public class regexredux {
         }
     }
 
+    public void TestPreCompiledSearchBench(String[] pattern, String sequence, IReplaceEngine engine, long iter) {
+        BiFunction<Pattern, String, Map.Entry<String, Long>> counts = (v, s) -> {
+            Long count = v.splitAsStream(s).count() - 1; //Off by one
+            return new AbstractMap.SimpleEntry<>(v.toString(), count);
+        };
+        final List<String> variants = Arrays.asList(pattern);
+        List<Pattern> compiledPatterns = variants.parallelStream()
+                .map(variant -> Pattern.compile(variant))
+                .collect(toList());
+        Map<String, Long> results = null;
+        long start = System.currentTimeMillis();
+        for (long i = 0; i < iter; i++) {
+            results = compiledPatterns.parallelStream()
+                    .map(variant -> counts.apply(variant, sequence))
+                    .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+        }
+        final Map<String, Long> resultsCopy = results;
+        long end = System.currentTimeMillis();
+        long dur = end - start;
+        System.out.println(engine.name() + ": " + dur);
+        variants.forEach(variant -> System.out.println(variant + " " + resultsCopy.get(variant)));
+    }
+
+    public void VerifyHsSearchBench(String[] pattern, String sequence) {
+        BiFunction<HyperscanEngine, String, Map.Entry<String, Long>> counts = (v, s) -> {
+            Long count = v.scan(s); //Off by one
+            System.out.println("=====Pattern: " + v.getPattern());
+            v.dumpAllMatched(s);
+            return new AbstractMap.SimpleEntry<>(v.getPattern(), count);
+        };
+        List<String> variants = Arrays.asList(pattern);
+        List<HyperscanEngine> compiledPatterns = variants.parallelStream()
+                .map(v -> new HyperscanEngine(v))
+                .collect(toList());
+        Map<String, Long> results = compiledPatterns.stream()
+                .map(variant -> counts.apply(variant, sequence))
+                .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+        final Map<String, Long> resultsCopy = results;
+        variants.forEach(variant -> System.out.println(variant + " " + resultsCopy.get(variant)));
+    }
+
+    public void TestHsSearchBench(String[] pattern, String sequence, long iter) {
+        BiFunction<HyperscanEngine, String, Map.Entry<String, Long>> counts = (v, s) -> {
+            Long count = v.scan(s); //Off by one
+            return new AbstractMap.SimpleEntry<>(v.getPattern(), count);
+        };
+        final List<String> variants = Arrays.asList(pattern);
+        List<HyperscanEngine> compiledPatterns = variants.parallelStream()
+                .map(variant -> new HyperscanEngine(variant))
+                .collect(toList());
+        Map<String, Long> results = null;
+        long start = System.currentTimeMillis();
+        for (long i = 0; i < iter; i++) {
+            results = compiledPatterns.parallelStream()
+                    .map(variant -> counts.apply(variant, sequence))
+                    .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+        }
+        final Map<String, Long> resultsCopy = results;
+        long end = System.currentTimeMillis();
+        long dur = end - start;
+        System.out.println(HyperscanEngine.class.getName() + ": " + dur);
+        variants.forEach(variant -> System.out.println(variant + " " + resultsCopy.get(variant)));
+    }
+
+    public void SimulateSQLHsBench(String[] pattern, String [] sequences, long iter) {
+        BiFunction<HyperscanEngine, String, Map.Entry<String, Long>> counts = (v, s) -> {
+            Long count = v.scan(s); //Off by one
+            return new AbstractMap.SimpleEntry<>(v.getPattern(), count);
+        };
+        final List<String> variants = Arrays.asList(pattern);
+        List<HyperscanEngine> compiledPatterns = variants.parallelStream()
+                .map(variant -> new HyperscanEngine(variant))
+                .collect(toList());
+        Map<String, Long> results = null;
+        long start = System.currentTimeMillis();
+        for (long i = 0; i < iter; i++) {
+            for (String sequence : sequences) {
+                results = compiledPatterns.parallelStream()
+                        .map(variant -> counts.apply(variant, sequence))
+                        .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+            }
+        }
+        final Map<String, Long> resultsCopy = results;
+        long end = System.currentTimeMillis();
+        long dur = end - start;
+        System.out.println(HyperscanEngine.class.getName() + ": " + dur);
+        variants.forEach(variant -> System.out.println(variant + " " + resultsCopy.get(variant)));
+    }
+
     public void TestSearchBench(String[] pattern, String sequence, IReplaceEngine engine, long iter) {
         BiFunction<String, String, Map.Entry<String, Long>> counts = (v, s) -> {
             Long count = Pattern.compile(v).splitAsStream(s).count() - 1; //Off by one
@@ -124,6 +222,30 @@ public class regexredux {
              results = variants.parallelStream()
                     .map(variant -> counts.apply(variant, sequence))
                     .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+        }
+        final Map<String, Long> resultsCopy = results;
+        long end = System.currentTimeMillis();
+        long dur = end - start;
+        System.out.println(engine.name() + ": " + dur);
+        for (String s : pattern) {
+            System.out.println(s + " " + resultsCopy.get(s));
+        }
+    }
+
+    public void SimulateSQLRegexBench(String[] pattern, String[] sequences, IReplaceEngine engine, long iter) {
+        BiFunction<String, String, Map.Entry<String, Long>> counts = (v, s) -> {
+            Long count = Pattern.compile(v).splitAsStream(s).count() - 1; //Off by one
+            return new AbstractMap.SimpleEntry<>(v, count);
+        };
+        final List<String> variants = Arrays.asList(pattern);
+        Map<String, Long> results = null;
+        long start = System.currentTimeMillis();
+        for (long i = 0; i < iter; i++) {
+            for (String sequence : sequences) {
+                results = variants.parallelStream()
+                        .map(variant -> counts.apply(variant, sequence))
+                        .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+            }
         }
         final Map<String, Long> resultsCopy = results;
         long end = System.currentTimeMillis();
@@ -166,6 +288,8 @@ public class regexredux {
         }
         String pat = readInputLines(regex.inputPatternFile);
         String data = readInputLines(regex.inputStringFile);
+        String[] patterns = readInputMultiLines(regex.inputPatternFile);
+        String[] sequences = readInputMultiLines(regex.inputStringFile);
         if (regex.onlyReplacement) {
             JDKReplaceEngine jdk = new JDKReplaceEngine();
             Re2ReplaceEngine re2 = new Re2ReplaceEngine();
@@ -178,11 +302,27 @@ public class regexredux {
             regex.Validation(pat, data, jdk, re2);
         }
         if (regex.onlySearch) {
-            String[] patterns = readInputMultiLines(regex.inputPatternFile);
             JDKReplaceEngine jdk = new JDKReplaceEngine();
             Re2ReplaceEngine re2 = new Re2ReplaceEngine();
             regex.TestSearchBench(patterns, data, jdk, regex.iteration);
             regex.TestSearchBench(patterns, data, re2, regex.iteration);
+        }
+        if (regex.precompile) {
+            JDKReplaceEngine jdk = new JDKReplaceEngine();
+            Re2ReplaceEngine re2 = new Re2ReplaceEngine();
+            regex.TestPreCompiledSearchBench(patterns, data, jdk, regex.iteration);
+            regex.TestPreCompiledSearchBench(patterns, data, re2, regex.iteration);
+            regex.TestHsSearchBench(patterns, data, regex.iteration);
+        }
+        if (regex.hyperscanOnly) {
+            regex.VerifyHsSearchBench(patterns, data);
+        }
+        if (regex.simulateSQL) {
+            JDKReplaceEngine jdk = new JDKReplaceEngine();
+            Re2ReplaceEngine re2 = new Re2ReplaceEngine();
+            regex.SimulateSQLRegexBench(patterns, sequences, jdk, regex.iteration);
+            regex.SimulateSQLRegexBench(patterns, sequences, re2, regex.iteration);
+            regex.SimulateSQLHsBench(patterns, sequences, regex.iteration);
         }
     }
 }
